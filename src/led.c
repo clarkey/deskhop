@@ -22,6 +22,11 @@ void set_keyboard_leds(uint8_t requested_led_state, device_t *state) {
     static uint8_t new_led_value;
 
     new_led_value = requested_led_state;
+
+    /* The computer drives the LEDs of a passed-through keyboard itself */
+    if (pt_is_target(state->kbd_dev_addr))
+        return;
+
     if (state->keyboard_connected) {
         if(tuh_hid_set_report(state->kbd_dev_addr,
                               state->kbd_instance,

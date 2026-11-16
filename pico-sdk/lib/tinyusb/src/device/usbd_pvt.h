@@ -68,6 +68,10 @@ typedef bool (*usbd_control_xfer_cb_t)(uint8_t rhport, uint8_t stage, tusb_contr
 
 void usbd_int_set(bool enabled);
 
+// DeskHop: hold back the status stage of the control OUT request whose data stage
+// just completed; the caller finishes it later with tud_control_status()
+void usbd_control_defer_status(void);
+
 //--------------------------------------------------------------------+
 // USBD Endpoint API
 // Note: rhport should be 0 since device stack only support 1 rhport for now

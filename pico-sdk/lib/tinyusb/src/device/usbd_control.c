@@ -143,6 +143,15 @@ void usbd_control_reset(void) {
   tu_varclr(&_ctrl_xfer);
 }
 
+// DeskHop: a class driver may call this from its CONTROL_STAGE_DATA callback to keep
+// the status stage open (host sees NAK) until it calls tud_control_status() itself.
+// Used to relay OUT requests to another device before acknowledging them.
+static bool _defer_status = false;
+
+void usbd_control_defer_status(void) {
+  _defer_status = true;
+}
+
 // Set complete callback
 void usbd_control_set_complete_callback(usbd_control_xfer_cb_t fp) {
   _ctrl_xfer.complete_cb = fp;
@@ -200,12 +209,18 @@ bool usbd_control_xfer_cb(uint8_t rhport, uint8_t ep_addr, xfer_result_t result,
       usbd_driver_print_control_complete_name(_ctrl_xfer.complete_cb);
       #endif
 
+      _defer_status = false;
       is_ok = _ctrl_xfer.complete_cb(rhport, CONTROL_STAGE_DATA, &_ctrl_xfer.request);
     }
 
     if (is_ok) {
-      // Send status
-      TU_ASSERT(_status_stage_xact(rhport, &_ctrl_xfer.request));
+      if (_defer_status) {
+        // DeskHop: the class driver sends the status stage itself later, with tud_control_status()
+        _defer_status = false;
+      } else {
+        // Send status
+        TU_ASSERT(_status_stage_xact(rhport, &_ctrl_xfer.request));
+      }
     } else {
       // Stall both IN and OUT control endpoint
       dcd_edpt_stall(rhport, EDPT_CTRL_OUT);

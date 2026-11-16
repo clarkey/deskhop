@@ -26,6 +26,9 @@ tusb_desc_device_t const desc_device = DEVICE_DESCRIPTOR(0x1209, 0xc000);
 // Invoked when received GET DEVICE DESCRIPTOR
 // Application return pointer to descriptor
 uint8_t const *tud_descriptor_device_cb(void) {
+    if (pt_clone_active())
+        return pt_desc_device();
+
     if (global_state.config_mode_active)
         return (uint8_t const *)&desc_device_config;
     else
@@ -123,6 +126,10 @@ static uint16_t _desc_str[32];
 // complete
 uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
     (void)langid;
+
+    /* While cloning a keyboard, its own strings (and only those) are reported */
+    if (pt_clone_active())
+        return pt_desc_string(index);
 
     uint8_t chr_count;
 
@@ -286,6 +293,9 @@ uint8_t const desc_configuration_config[] = {
 
 uint8_t const *tud_descriptor_configuration_cb(uint8_t index) {
     (void)index; // for multiple configurations
+
+    if (pt_clone_active())
+        return pt_desc_configuration();
 
     if (global_state.config_mode_active)
         return desc_configuration_config;

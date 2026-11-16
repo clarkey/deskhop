@@ -198,11 +198,14 @@ void release_all_keys(device_t *state) {
 
 
 /* Combine all keyboard states into a single report */
-void combine_kbd_states(device_t *state, hid_keyboard_report_t *combined_report) {
+static void combine_kbd_states_except(device_t *state, hid_keyboard_report_t *combined_report, uint8_t skip_idx) {
     memset(combined_report, 0, sizeof(hid_keyboard_report_t));
 
     /* Combine all local keyboards up to max_kbd_idx */
     for (uint8_t i = 0; i <= state->max_kbd_idx; i++) {
+        if (i == skip_idx)
+            continue;
+
         combined_report->modifier |= state->local_kbd_states[i].modifier;
         add_keys(combined_report, &state->local_kbd_states[i]);
     }
@@ -210,6 +213,10 @@ void combine_kbd_states(device_t *state, hid_keyboard_report_t *combined_report)
     /* Add remote keyboard */
     combined_report->modifier |= state->remote_kbd_state.modifier;
     add_keys(combined_report, &state->remote_kbd_state);
+}
+
+void combine_kbd_states(device_t *state, hid_keyboard_report_t *combined_report) {
+    combine_kbd_states_except(state, combined_report, PT_NO_IDX);
 }
 
 /* ==================================================== *
@@ -263,13 +270,29 @@ void queue_kbd_report(hid_keyboard_report_t *report, device_t *state) {
 void send_key(hid_keyboard_report_t *report, device_t *state) {
     /* Create a combined report from all device states */
     hid_keyboard_report_t combined_report;
-    combine_kbd_states(state, &combined_report);
 
     if (CURRENT_BOARD_IS_ACTIVE_OUTPUT) {
+        /* A passed-through keyboard reaches this computer directly. Its keys stay out of
+           our own keyboard interface, which then only carries the other keyboards. */
+        static hid_keyboard_report_t last_own;
+        uint8_t skip_idx = pt_local_skip_idx();
+
+        combine_kbd_states_except(state, &combined_report, skip_idx);
+        state->last_activity[BOARD_ROLE] = time_us_64();
+
+        if (skip_idx != PT_NO_IDX) {
+            /* Typing on the passed-through keyboard changes nothing for our interface */
+            if (memcmp(&last_own, &combined_report, sizeof(last_own)) == 0)
+                return;
+
+            last_own = combined_report;
+        }
+
         /* Queue the combined report */
         queue_kbd_report(&combined_report, state);
-        state->last_activity[BOARD_ROLE] = time_us_64();
     } else {
+        combine_kbd_states(state, &combined_report);
+
         /* Send the combined report to ensure all keys are included */
         queue_packet((uint8_t *)&combined_report, KEYBOARD_REPORT_MSG, KBD_REPORT_LENGTH);
     }
@@ -278,7 +301,9 @@ void send_key(hid_keyboard_report_t *report, device_t *state) {
 /* Decide if consumer control reports go local or to the other board */
 void send_consumer_control(uint8_t *raw_report, device_t *state) {
     if (CURRENT_BOARD_IS_ACTIVE_OUTPUT) {
-        queue_cc_packet(raw_report, state);
+        /* Media keys of a passed-through keyboard reach this computer directly */
+        if (!pt_parsing_target())
+            queue_cc_packet(raw_report, state);
         state->last_activity[BOARD_ROLE] = time_us_64();
     } else {
         queue_packet((uint8_t *)raw_report, CONSUMER_CONTROL_MSG, CONSUMER_CONTROL_LENGTH);
@@ -288,7 +313,8 @@ void send_consumer_control(uint8_t *raw_report, device_t *state) {
 /* Decide if consumer control reports go local or to the other board */
 void send_system_control(uint8_t *raw_report, device_t *state) {
     if (CURRENT_BOARD_IS_ACTIVE_OUTPUT) {
-        queue_system_packet(raw_report, state);
+        if (!pt_parsing_target())
+            queue_system_packet(raw_report, state);
         state->last_activity[BOARD_ROLE] = time_us_64();
     } else {
         queue_packet((uint8_t *)raw_report, SYSTEM_CONTROL_MSG, SYSTEM_CONTROL_LENGTH);
@@ -329,8 +355,10 @@ void process_keyboard_report(uint8_t *raw_report, int length, uint8_t itf, hid_i
         hotkey->action_handler(state, &new_report);
 
         /* And pass the key to the output PC if configured to do so. */
-        if (!hotkey->pass_to_os)
+        if (!hotkey->pass_to_os) {
+            pt_kbd_swallow();
             return;
+        }
     }
 
     /* This method will decide if the key gets queued locally or sent through UART */

@@ -171,6 +171,8 @@ void tud_cdc_rx_cb(uint8_t itf) {
 void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance) {
     uint8_t itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
 
+    pt_host_umount(dev_addr);
+
     if (dev_addr > MAX_DEVICES || instance >= MAX_INTERFACES)
         return;
 
@@ -208,12 +210,16 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_re
     /* Parse the report descriptor into our internal structure. */
     parse_report_descriptor(iface, desc_report, desc_len);
 
+    /* Keep a copy if this is a keyboard we pass through to the computer untouched */
+    pt_host_hid_mount(dev_addr, instance, desc_report, desc_len);
+
     switch (itf_protocol) {
         case HID_ITF_PROTOCOL_KEYBOARD:
             if (global_state.config.enforce_ports && BOARD_ROLE == OUTPUT_B)
                 return;
 
-            if (global_state.config.force_kbd_boot_protocol)
+            /* A passed-through keyboard stays in whatever protocol the computer selects */
+            if (global_state.config.force_kbd_boot_protocol && !pt_is_target(dev_addr))
                 tuh_hid_set_protocol(dev_addr, instance, HID_PROTOCOL_BOOT);
 
             /* Keeping this is required for setting leds from device set_report callback */
@@ -269,6 +275,14 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
 
     hid_interface_t *iface = &global_state.iface[dev_addr-1][instance];
 
+    /* A passed-through keyboard gets its raw data relayed to the computer. Only its
+       actual key reports continue to the parser below (hotkeys, the other output). */
+    uint8_t pt_flags = pt_host_report(dev_addr, instance, report, len);
+    bool understood  = false;
+
+    if (!(pt_flags & PT_RX_PARSE))
+        goto next_report;
+
     /* Calculate a device index that distinguishes between different devices
        while staying within the bounds of MAX_DEVICES.
 
@@ -297,6 +311,9 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
         device_idx = (dev_addr - 1) % (MAX_DEVICES - 1);
     }
 
+    if (pt_flags & PT_RX_HELD)
+        pt_parse_begin(device_idx);
+
     /* Boot protocol reports omit descriptor report IDs. */
     bool report_has_id = iface->uses_report_id && iface->protocol != HID_PROTOCOL_BOOT;
 
@@ -306,18 +323,30 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
 
         process_report_f receiver = report_receivers[iface->report_handler[report_id]];
 
-        if (receiver != NULL)
+        if (receiver != NULL) {
             receiver((uint8_t *)report, len, device_idx, iface);
+            understood = true;
+        }
     }
     else if (itf_protocol == HID_ITF_PROTOCOL_KEYBOARD) {
         process_keyboard_report((uint8_t *)report, len, device_idx, iface);
+        understood = true;
     }
     else if (itf_protocol == HID_ITF_PROTOCOL_MOUSE) {
         process_mouse_report((uint8_t *)report, len, device_idx, iface);
     }
 
-    /* Continue requesting reports */
-    tuh_hid_receive_report(dev_addr, instance);
+next_report:
+    /* A held-back key report of a passed-through keyboard is relayed now, unless it
+       was a hotkey or the other computer is the active output */
+    if (pt_flags & PT_RX_HELD) {
+        pt_parse_end();
+        pt_flags = pt_host_report_finish(dev_addr, instance, report, len, understood);
+    }
+
+    /* Continue requesting reports (passthrough may hold off until its queue drains) */
+    if (pt_flags & PT_RX_REARM)
+        tuh_hid_receive_report(dev_addr, instance);
 }
 
 /* Set protocol in a callback. This is tied to an interface, not a specific report ID */

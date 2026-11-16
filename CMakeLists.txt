@@ -8,6 +8,8 @@ set(VERSION_MINOR 80)
 ## Release Type Selection
 option(DH_DEBUG "Build a debug version" OFF)
 option(DH_DEBUG_CDC_FLASH "Enable CDC command to trigger bootloader mode" OFF)
+option(DH_PASSTHROUGH "Pass an Apple keyboard with Touch ID through to the computer untouched" OFF)
+option(DH_PASSTHROUGH_TRACE "Debugging aid (needs DH_DEBUG): record the relayed requests and print them on the debug port" OFF)
 
 ## Hardware Configuration
 set(DP_PIN_DEFAULT 14 CACHE STRING "Default USB D+ Pin Number")
@@ -70,6 +72,7 @@ set(COMMON_SOURCES
   ${SRC_DIR}/usb.c
   ${SRC_DIR}/main.c
   ${SRC_DIR}/ramdisk.c
+  ${SRC_DIR}/passthrough.c
   ${PICO_TINYUSB_PATH}/src/portable/raspberrypi/pio_usb/dcd_pio_usb.c
   ${PICO_TINYUSB_PATH}/src/portable/raspberrypi/pio_usb/hcd_pio_usb.c
 )
@@ -124,6 +127,14 @@ endif()
 
 if (DH_DEBUG_CDC_FLASH)
   add_definitions(-DDH_DEBUG_CDC_FLASH)
+endif()
+
+if (DH_PASSTHROUGH)
+  add_definitions(-DDH_PASSTHROUGH)
+endif()
+
+if (DH_PASSTHROUGH_TRACE)
+  add_definitions(-DDH_PASSTHROUGH_TRACE)
 endif()
   
 target_include_directories(${binary} PUBLIC ${COMMON_INCLUDES})

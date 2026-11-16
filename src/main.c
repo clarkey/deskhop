@@ -30,6 +30,9 @@ int main(void) {
         [3] = {.exec = &process_mouse_queue_task, .frequency = _HZ(2000)},   // | Check if there were any mouse movements and send them
         [4] = {.exec = &process_hid_queue_task,   .frequency = _HZ(1000)},   // | Check if there are any packets to send over vendor link
         [5] = {.exec = &process_uart_tx_task,     .frequency = _TOP()},      // | Check if there are any packets to send over UART
+#ifdef DH_PASSTHROUGH
+        [6] = {.exec = &pt_device_task,           .frequency = _TOP()},      // | Relay the passed-through keyboard to the computer
+#endif
     };                                                                       // `----- then go back and repeat forever
     const int NUM_TASKS = ARRAY_SIZE(tasks_core0);
 
@@ -38,6 +41,9 @@ int main(void) {
 
     // Initial board setup
     initial_setup(device);
+
+    // Queues for the keyboard passthrough, needed before either USB stack runs
+    pt_init();
 
     // Initial state, A is the default output
     set_active_output(device, OUTPUT_A);
@@ -63,6 +69,9 @@ void core1_main() {
         [4] = {.exec = &screensaver_task,        .frequency = _HZ(120)},     // | Handle "screensaver" movements
         [5] = {.exec = &firmware_upgrade_task,   .frequency = _HZ(4000)},    // | Send firmware to the other board if needed
         [6] = {.exec = &heartbeat_output_task,   .frequency = _HZ(1)},       // | Output periodic heartbeats
+#ifdef DH_PASSTHROUGH
+        [7] = {.exec = &pt_host_task,            .frequency = _TOP()},       // | Relay the computer's requests to the passed-through keyboard
+#endif
     };                                                                       // `----- then go back and repeat forever
     const int NUM_TASKS = ARRAY_SIZE(tasks_core1);
 
